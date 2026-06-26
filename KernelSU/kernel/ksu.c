@@ -48,6 +48,10 @@
 #include "selinux/selinux.h"
 #include "selinux/sepolicy.h"
 
+#ifdef CONFIG_KPROBES
+#include "kprobes_common.h"
+#endif
+
 #ifdef CONFIG_ARM64
 #include "arm64_bl_insn.h"
 #endif
@@ -85,7 +89,7 @@
 	#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 8, 0)
 	#include "hook/lsm_hooks_static.c"
 	#elif LINUX_VERSION_CODE >= KERNEL_VERSION(4, 2, 0)
-	#include "hook/lsm_hooks_list.c"
+	#include "hook/lsm_hooks_static.c"
 	#else
 	#include "hook/lsm_hooks_ultralegacy.c"
 	#endif
