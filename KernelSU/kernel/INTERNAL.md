@@ -1,4 +1,8 @@
 # Quirks / Adaptations
+## NOT IMPLEMENTED
+- preinit, #3397
+- late-load, #3258
+
 ## C-style
 - GNU23, but written in a way compatible to GNU17/GNU11 compilers.
 - pointer-heavy. assumes little endian on everything.
