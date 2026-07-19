@@ -27,7 +27,7 @@ struct symbol_hash_entry {
 	uintptr_t addr;
 };
 
-static void *kallsyms_hash_array = NULL;
+static void *kallsyms_hash_array = nullptr;
 static size_t kallsyms_hash_array_entry_count = 0;
 static size_t kallsyms_hash_array_capacity = 0;
 
@@ -68,9 +68,7 @@ static inline void insert_to_kallsyms_array(const char *str, uintptr_t addr)
 			return;
 	}
 
-skip_anti_dup:
-	;
-
+skip_anti_dup:;
 	if (kallsyms_hash_array_entry_count < kallsyms_hash_array_capacity)
 		goto size_is_sufficient;
 
@@ -141,10 +139,7 @@ static noinline void dotted_kallsyms_build_hash_array(void)
 
 	cond_resched();
 
-	char *membuf __zoffstack(KSYM_SYMBOL_LEN * 2);
-	if (!membuf)
-		return;
-
+	char *membuf __offstack(KSYM_SYMBOL_LEN * 2);
 	char *symbol_buf = membuf;
 	char *symbol_cache = membuf + KSYM_SYMBOL_LEN;
 
@@ -192,9 +187,7 @@ scan_start:
 
 	insert_to_kallsyms_array(symbol_buf, curr);
 
-step_up:
-	;
-
+step_up:;
 	unsigned long sym_size = 0;
 	unsigned long offset = 0;
 	kallsyms_lookup_size_offset(curr, &sym_size, &offset);
@@ -302,8 +295,7 @@ bootstrap:
 no_fn:
 	return 0x0;
 
-fn_ok:
-	;
+fn_ok:;
 #else
 #define kallsyms_on_each_symbol_fn kallsyms_on_each_symbol
 #endif
@@ -319,18 +311,14 @@ fn_ok:
 }
 
 #ifdef CONFIG_KPROBES // kprobes based symbol resolver.
-static inline uintptr_t kp_kallsyms_lookup_name(const char *name)
+static uintptr_t kp_kallsyms_lookup_name(const char *name)
 {
-	struct kprobe *kp __zoffstack(sizeof(*kp));
-	if (!kp)
+	struct kprobe kp = { .symbol_name = name };
+	if (!!register_kprobe(&kp))
 		return 0x0;
 
-	kp->symbol_name = name;
-	if (!!register_kprobe(kp))
-		return 0x0;
-
-	uintptr_t addr = (uintptr_t)kp->addr;
-	unregister_kprobe(kp);
+	uintptr_t addr = (uintptr_t)kp.addr;
+	unregister_kprobe(&kp);
 
 	pr_info("%s: success! %s at 0x%lx\n", __func__, name, addr);
 	return addr;
@@ -373,8 +361,7 @@ static noinline uintptr_t kallsyms_lookup_retry(const char *name)
 
 	return kallsyms_lookup_hashed_name(name);
 	
-found:
-	;
+found:;
 	char namebuf[KSYM_NAME_LEN];
 	sprint_symbol_no_offset(namebuf, addr);
 	pr_info("%s: %s addr: 0x%lx \n", __func__, namebuf, addr);
@@ -442,7 +429,7 @@ static noinline void dotted_kallsyms_destroy_hash_array(void)
 
 	kvfree(kallsyms_hash_array);
 
-	kallsyms_hash_array = NULL;
+	kallsyms_hash_array = nullptr;
 	kallsyms_hash_array_entry_count = 0;
 	kallsyms_hash_array_capacity = 0;
 
