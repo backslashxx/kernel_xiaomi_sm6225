@@ -9,7 +9,7 @@
 
 static bool ksu_su_compat_enabled __read_mostly = true;
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 8, 0)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 4, 0)
 static void __user *userspace_stack_buffer(const void *d, size_t len)
 {
 	// To avoid having to mmap a page in userspace, just write below the stack
@@ -22,13 +22,14 @@ static void __user *userspace_stack_buffer(const void *d, size_t len)
 static void __user *userspace_stack_buffer(const void *d, size_t len)
 {
 	if (!current->mm)
-		return NULL;
+		return nullptr;
 
 	volatile unsigned long start_stack = current->mm->start_stack;
 	unsigned int step = 32;
 	
 start_loop:;
 	char __user *p = (void __user *)(start_stack - step - len);
+
 	if (IS_ENABLED(CONFIG_KSU_DEBUG))
 		pr_info("%s: start_stack: %lx p: %lx len: %zu\n", __func__, start_stack, (unsigned long)p, len );
 
@@ -119,7 +120,7 @@ uid_check:
 #elif defined(CONFIG_KSU_SHELL_HAS_SU_ALWAYS)
 	/**
 	 * NOTE: if shell always has su anyway, and full uid checks are disabled, 
-	 * we can skip all these checks. this goto is for explicitness / code styel
+	 * we can skip all these checks. this goto is for explicitness / code style
 	 */
 	 goto check_ptr;
 	 __builtin_unreachable();
@@ -135,17 +136,16 @@ uid_check:
 
 	/**
 	 * use our noinline copy. only shell falls through this. nbd that
-	 * it opens up a stack frame .having small code around here is worth
+	 * it opens up a stack frame. having small code around here is worth
 	 */
 	if (!__ksu_is_allow_uid_copy(uid))
 		return false;
 #endif /* default behavior */
 check_ptr:
-	// first check the pointer-to-pointer
+	assume(!!ptr_to_check);
 	if (unlikely(!ptr_to_check))
 		return false;
 
-	// now dereference pointer-to-pointer to check actual pointer
 	if (unlikely(!*ptr_to_check))
 		return false;
 
