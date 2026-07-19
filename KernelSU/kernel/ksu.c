@@ -267,9 +267,13 @@ static int __init kernelsu_init(void)
 device_initcall(kernelsu_init);
 #else
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 19, 0)
 char ksu_block_modules[256];
 module_param_string(block_modules, ksu_block_modules, sizeof(ksu_block_modules), 0);
 #include "downstream/module_blacklist.h"
+#else
+#define ksu_extend_module_blacklist() do { } while (0)
+#endif
 
 #ifndef CONFIG_KSU_SHELL_HAS_SU_ALWAYS
 /**
@@ -280,6 +284,9 @@ module_param_string(block_modules, ksu_block_modules, sizeof(ksu_block_modules),
  */
 module_param(allow_shell, bool, 0); 
 #endif
+
+// tiann/KernelSU/pull/3516
+module_param_named(bundled, ksu_bundled, bool, 0);
 
 static int __init kernelsu_lkm_init(void)
 {

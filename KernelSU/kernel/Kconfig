@@ -5,13 +5,15 @@ config KSU
 	depends on !CPU_BIG_ENDIAN
 	depends on SECURITY_SELINUX
 	select SECCOMP
-	default n
+	default y
 	help
 	  Enable kernel-level root privileges on Android System.
 
 config KSU_KPROBES_KSUD
 	bool "Enable dynamic kprobes for early boot hooks"
 	depends on KSU
+	depends on !KSU_TAMPER_SYSCALL_TABLE
+	depends on !KSU_HACK_ARM64_BRANCH_LINK
 	depends on KPROBES && KRETPROBES
 	default n
 	help

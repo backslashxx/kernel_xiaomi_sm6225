@@ -311,6 +311,9 @@ asmlinkage long hook_armeabi_fstatat64(int dfd, const char __user * filename, st
 static void *armeabi_fstat64 __read_mostly = NULL;
 asmlinkage long hook_armeabi_fstat64_ret(unsigned long fd, struct stat64 __user * statbuf)
 {
+	// workaround for pre- torvalds/linux 54e45c169dbce43cf46d00eb1521b655b6e4f9e9
+	extern typeof(hook_armeabi_fstat64_ret) sys_fstat64;
+
 	// we handle it like rp
 	long ret = sys_fstat64(fd, statbuf);
 	ksu_handle_fstat64_ret(&fd, &statbuf);
@@ -354,7 +357,7 @@ static DEFINE_MUTEX(sucompat_toggle_mutex);
 
 static void syscall_table_sucompat_enable()
 {
-	mutex_lock(&sucompat_toggle_mutex);
+	guarded_mutex_lock(&sucompat_toggle_mutex);
 
 	read_and_replace_syscall((void *)&aarch64_execve, __AARCH64_execve, (void *)hook_aarch64_execve, (void *)sys_call_table);
 	read_and_replace_syscall((void *)&aarch64_execveat, __AARCH64_execveat, (void *)hook_aarch64_execveat, (void *)sys_call_table);
@@ -368,12 +371,11 @@ static void syscall_table_sucompat_enable()
 	read_and_replace_syscall((void *)&armeabi_fstatat64, __ARMEABI_fstatat64, (void *)hook_armeabi_fstatat64, (void *)compat_sys_call_table);
 #endif
 
-	mutex_unlock(&sucompat_toggle_mutex);
 }
 
 static void syscall_table_sucompat_disable()
 {
-	mutex_lock(&sucompat_toggle_mutex);
+	guarded_mutex_lock(&sucompat_toggle_mutex);
 
 	restore_syscall((void *)&aarch64_execve, __AARCH64_execve, (void *)hook_aarch64_execve, (void *)sys_call_table);
 	restore_syscall((void *)&aarch64_execveat, __AARCH64_execveat, (void *)hook_aarch64_execveat, (void *)sys_call_table);
@@ -386,8 +388,6 @@ static void syscall_table_sucompat_disable()
 	restore_syscall((void *)&armeabi_faccessat, __ARMEABI_faccessat, (void *)hook_armeabi_faccessat, (void *)compat_sys_call_table);
 	restore_syscall((void *)&armeabi_fstatat64, __ARMEABI_fstatat64, (void *)hook_armeabi_fstatat64, (void *)compat_sys_call_table);
 #endif
-
-	mutex_unlock(&sucompat_toggle_mutex);
 }
 
 static void syscall_table_ksud_hook_init()
