@@ -300,7 +300,7 @@ static int __init kernelsu_lkm_init(void)
 	kernelsu_init();
 
 	ksu_extend_module_blacklist();
-	list_del(&THIS_MODULE->list);
+	//list_del(&THIS_MODULE->list);
 	kobject_del(&THIS_MODULE->mkobj.kobj); // tiann/KernelSU fefb02e
 
 	if (current->pid == 1)
