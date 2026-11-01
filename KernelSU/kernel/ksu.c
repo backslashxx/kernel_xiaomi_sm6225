@@ -5,8 +5,6 @@
 
 // for OOT builds like on ddk, just enable everything
 #ifndef CONFIG_KSU_HEURISTIC_IN_TREE_BUILD
-	#define CONFIG_KSU_GETPRIORITY_FILTER_DEMO 1
-	#define CONFIG_KSU_HOSTSREDIRECT 1
 	#define CONFIG_KSU_LSM_SECURITY_HOOKS 1
 	#define CONFIG_KSU_HACK_ARM64_BRANCH_LINK 1
 	#define CONFIG_KSU_FEATURE_SULOG 1
@@ -78,6 +76,8 @@
 #undef CONFIG_COMPAT
 #endif
 
+#include "downstream/syscall_table_common.h"
+
 #ifdef CONFIG_KPROBES
 #include "downstream/kprobes_common.h"
 #endif
@@ -101,10 +101,6 @@
 
 #ifdef CONFIG_KSU_HOSTSREDIRECT
 #include "downstream/ksu_hostsredirect.h"
-#endif
-
-#ifdef CONFIG_KSU_GETPRIORITY_FILTER_DEMO
-#include "downstream/ksu_getpriority.h"
 #endif
 
 // unity build
@@ -175,7 +171,8 @@
 #ifdef CONFIG_KSU_HACK_ARM64_BRANCH_LINK
 #undef syscall_table_sucompat_enable
 #undef syscall_table_sucompat_disable
-#include "hook/syscall_table_hook_arm64.c" // included as fallback
+#include "hook/syscall_table_hook_arm64.c"
+#include "hook/syscall_table_mirror.c"		// attempt to mirror sct
 #include "hook/branch_link_hook_arm64.c"
 #endif
 
@@ -266,9 +263,6 @@ static int __init kernelsu_init(void)
 		return -ENOSYS;
 	}
 
-#ifdef KSU_CAN_USE_MODULE_BLACKLIST
-	ksu_module_blacklist_init(); // Block modules early, before vendor modules are loaded in second stage.
-#endif
 	// register features
 	ksu_feature_init();
 	ksu_sucompat_init();
@@ -303,8 +297,8 @@ static int __init kernelsu_init(void)
 	ksu_branch_link_patch_init();
 #endif
 
-#ifdef CONFIG_KSU_GETPRIORITY_FILTER_DEMO
-	ksu_getpriority_init();
+#ifdef KSU_CAN_USE_MODULE_BLACKLIST
+	ksu_module_blacklist_init(); // Block modules early, before vendor modules are loaded in second stage.
 #endif
 	return 0;
 }
