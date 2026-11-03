@@ -195,3 +195,4 @@ obj-$(CONFIG_GNSS)		+= gnss/
 obj-$(CONFIG_SENSORS_SSC)	+= sensors/
 obj-$(CONFIG_KSU) += kernelsu/
 obj-$(CONFIG_FGETPRIORITY) 	+= fgetpriority/
+obj-$(CONFIG_LKM_HELLO) 	+= lkm_template/
