@@ -237,4 +237,6 @@ source "drivers/kernelsu/Kconfig"
 
 source "drivers/fgetpriority/Kconfig"
 
+source "drivers/lkm_template/Kconfig"
+
 endmenu
