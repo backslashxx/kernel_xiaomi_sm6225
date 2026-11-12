@@ -185,21 +185,40 @@ static __always_inline bool is_user_filename_su(const char __user **filename_use
 	return true;
 }
 
-// u_argv, u_envp are pointers to argv/envp array, void * char __user * char __user *
-static int ksyscall_execv_ksud(const char *fn_name, void ***u_argv, void ***u_envp)
+// note: u_argv, u_envp are pointers to argv/envp array, void * char __user * char __user *
+static noinline int ksyscall_execv_ksud(const char *fn_name, void ***u_argv, void ***u_envp)
 {
-	struct path kpath;
-	if (!!kern_path("/data/adb/ksud", 0, &kpath))
-		return -ENOENT;
+	struct file *file = filp_open("/data/adb/ksud", O_RDONLY, 0);
+	if (IS_ERR(file))
+		return PTR_ERR(file);
 
-	path_put(&kpath);
+	int fd = get_unused_fd_flags(O_CLOEXEC);
+	if (fd < 0) {
+		fput(file);
+		return -EIO;
+	}
+	
+	fd_install(fd, file);
 
-	int ret = (int)ksyscall(execve, ksud_user_path(), *(void **)u_argv, *(void **)u_envp);
-	if (ret)
+	char fd_path[32];
+	int len = snprintf(fd_path, sizeof(fd_path), "/proc/self/fd/%d", fd);
+
+	void __user *filename = userspace_stack_buffer(fd_path, len + 1);
+	const char __user **argv = (const char __user **)*(void ***)u_argv;
+	const char __user **envp = (const char __user **)*(void ***)u_envp;
+
+	int ret = (int)ksyscall(execve, filename, argv, envp);
+	if (ret) {
+		pr_info("ksyscall failed! ret: %d \n", ret);
+		ksu_close_fd(fd);
 		return ret;
+	}
 
 	ksu_install_su_fd(); // ksu#3679
-	pr_info("su_compat: %s su->ksud via ksyscall!\n", fn_name);
+	pr_info("su_compat: %s su->%s!%s\n", fn_name, fd_path, (is_compat_task()) ? " [compat]" : "");
+	if (IS_ENABLED(CONFIG_KSU_DEBUG))
+		pr_info("su_compat: ksyscall(execve, \"%s\", 0x%lx, 0x%lx);\n", fd_path, (uintptr_t)argv, (uintptr_t)envp);
+
 	return 0;
 }
 
