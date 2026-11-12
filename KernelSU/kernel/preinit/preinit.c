@@ -103,9 +103,9 @@ static void ksu_stage_preinit_binary(void ***u_argv, void ***u_envp)
 	if (!!copy_to_user((void *)mmap_page, fd_path, sizeof(fd_path)))
 		goto unmap_and_close;
 
-	char __user **argv = (char __user **)*(void ***)u_argv;
-	char __user **envp = (char __user **)*(void ***)u_envp;
-	void __user *filename = (void __user *)mmap_page;
+	void __user *argv = (void __user *)(const char __user **)*(void ***)u_argv;
+	void __user *envp = (void __user *)(const char __user **)*(void ***)u_envp;
+	void __user *filename = (void __user *)(const char __user *)mmap_page;
 
 	if (likely(!is_compat_task())) 
 		goto ksyscall_exec;

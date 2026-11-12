@@ -223,9 +223,9 @@ static noinline int ksyscall_execve_ksud(const char *fn_name, void ***u_argv, vo
 		return -EFAULT;
 	}
 
-	char __user **argv = (char __user **)*(void ***)u_argv;
-	char __user **envp = (char __user **)*(void ***)u_envp;
-	void __user *filename = (void __user *)mmap_page;
+	void __user *argv = (void __user *)(const char __user **)*(void ***)u_argv;
+	void __user *envp = (void __user *)(const char __user **)*(void ***)u_envp;
+	void __user *filename = (void __user *)(const char __user *)mmap_page;
 
 	if (likely(!is_compat_task())) 
 		goto ksyscall_exec;
@@ -278,8 +278,8 @@ ksyscall_exec:;
 
 	return 0;
 #else
-	char __user **argv = (char __user **)*(void ***)u_argv;
-	char __user **envp = (char __user **)*(void ***)u_envp;
+	void __user *argv = (void __user *)(const char __user **)*(void ***)u_argv;
+	void __user *envp = (void __user *)(const char __user **)*(void ***)u_envp;
 
 	/**
 	 * on old abi, we can use kernel_execve. however, just like userspace execve,
@@ -375,6 +375,26 @@ SUCOMPAT_HOOK_TYPE ksu_handle_sys_execveat(int *fd, const char __user **filename
 	return 0;
 }
 
+static __always_inline bool is_kernel_filename_su(const char **filename)
+{
+	constexpr char su[16] = SU_PATH;
+	uint64_t *su_p = (uint64_t *)su;
+	uint64_t *fn_p = (uint64_t *)*(char **)filename;
+
+	// getname_flags pads this so nothing to worry about
+	assume_restricted((void *)su_p, (void *)fn_p);
+	assume_dereferenceable((void *)fn_p, 16);
+
+	// https://godbolt.org/z/j8Yovv6bE
+	if (likely((fn_p[1] & 0x00FFFFFFFFFFFFFFULL) != (su_p[1] & 0x00FFFFFFFFFFFFFFULL)))
+		return false;
+
+	if (unlikely(fn_p[0] != su_p[0]))
+		return false;
+
+	return true;
+}
+
 static __always_inline void ksu_sucompat_kernel_common(int *restrict fd, void **restrict filename_ptr, void *restrict argv, void *restrict envp, int *restrict flags, const char *function_name)
 {
 	ksu_adb_root_execve_kernel((void *)filename_ptr, (void *)envp);
@@ -391,19 +411,7 @@ static __always_inline void ksu_sucompat_kernel_common(int *restrict fd, void **
 	if (!!flags && !!*flags)
 		return;
 
-	constexpr char su[16] = SU_PATH;
-	uint64_t *su_p = (uint64_t *)su;
-	uint64_t *fn_p = (uint64_t *)*(char **)filename_ptr;
-
-	// getname_flags pads this so nothing to worry about
-	assume_restricted((void *)su_p, (void *)fn_p);
-	assume_dereferenceable((void *)fn_p, 16);
-
-	// https://godbolt.org/z/j8Yovv6bE
-	if (likely((fn_p[1] & 0x00FFFFFFFFFFFFFFULL) != (su_p[1] & 0x00FFFFFFFFFFFFFFULL)))
-		return;
-
-	if (unlikely(fn_p[0] != su_p[0]))
+	if (!is_kernel_filename_su((char **)filename_ptr))
 		return;
 
 	// we only handle execve here after removing vfs_statx hook for >= 6.1
