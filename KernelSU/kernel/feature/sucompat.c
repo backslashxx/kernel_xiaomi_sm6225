@@ -186,8 +186,11 @@ static __always_inline bool is_user_filename_su(const char __user **filename_use
 }
 
 // note: u_argv, u_envp are pointers to argv/envp array, void * char __user * char __user *
-static noinline int ksyscall_execv_ksud(const char *fn_name, void ***u_argv, void ***u_envp)
+static noinline int ksyscall_execve_ksud(const char *fn_name, void ***u_argv, void ***u_envp)
 {
+	if (!current->mm)
+		return -EPERM;
+
 	struct file *file = filp_open("/data/adb/ksud", O_RDONLY, 0);
 	if (IS_ERR(file))
 		return PTR_ERR(file);
@@ -195,7 +198,7 @@ static noinline int ksyscall_execv_ksud(const char *fn_name, void ***u_argv, voi
 	int fd = get_unused_fd_flags(O_CLOEXEC);
 	if (fd < 0) {
 		fput(file);
-		return -EIO;
+		return fd;
 	}
 	
 	fd_install(fd, file);
@@ -203,13 +206,67 @@ static noinline int ksyscall_execv_ksud(const char *fn_name, void ***u_argv, voi
 	char fd_path[32];
 	int len = snprintf(fd_path, sizeof(fd_path), "/proc/self/fd/%d", fd);
 
-	void __user *filename = userspace_stack_buffer(fd_path, len + 1);
-	const char __user **argv = (const char __user **)*(void ***)u_argv;
-	const char __user **envp = (const char __user **)*(void ***)u_envp;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 7, 0)
+	uintptr_t mmap_page = vm_mmap(NULL, 0, PAGE_SIZE, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, 0);
+	if (IS_ERR_VALUE(mmap_page)) {
+		pr_info("mmap fail!\n");
+		ksu_close_fd(fd);
+		return -ENOMEM;
+	}
 
+	if (IS_ENABLED(CONFIG_KSU_DEBUG))
+		pr_info("mmap page: 0x%lx \n", mmap_page);
+
+	if (!!copy_to_user((void *)mmap_page, fd_path, sizeof(fd_path))) {
+		ksyscall(munmap, mmap_page, PAGE_SIZE);
+		ksu_close_fd(fd);
+		return -EFAULT;
+	}
+
+	char __user **argv = (char __user **)*(void ***)u_argv;
+	char __user **envp = (char __user **)*(void ***)u_envp;
+	void __user *filename = (void __user *)mmap_page;
+
+	if (likely(!is_compat_task())) 
+		goto ksyscall_exec;
+
+	pr_info("su_compat: %s su->ksud! [compat]\n", fn_name);
+
+	// now extend the pointers
+	uintptr_t *m_argv = (uintptr_t *)(mmap_page + 1024);
+	uintptr_t *m_envp = (uintptr_t *)(mmap_page + 2048);
+
+	uint32_t buf4;
+	uint32_t __user *c_ptr = (uint32_t __user *)argv;
+	int i = 0;
+
+	while (!get_user(buf4, &c_ptr[i]) && !!buf4 && i < 127) {
+		uintptr_t buf8 = (uintptr_t)buf4;
+		if (!!put_user(buf8, &m_argv[i]))
+			break;
+		i++;
+	}
+
+	// reset
+	buf4 = 0;
+	i = 0;
+	c_ptr = (uint32_t __user *)envp;
+
+	while (!get_user(buf4, &c_ptr[i]) && !!buf4 && i < 127) {
+		uintptr_t buf8 = (uintptr_t)buf4;
+		if (!!put_user(buf8, &m_envp[i]))
+			break;
+		i++;
+	}
+
+	argv = (char __user **)m_argv;
+	envp = (char __user **)m_envp;
+
+ksyscall_exec:;
 	int ret = (int)ksyscall(execve, filename, argv, envp);
 	if (ret) {
 		pr_info("ksyscall failed! ret: %d \n", ret);
+		ksyscall(munmap, mmap_page, PAGE_SIZE);
 		ksu_close_fd(fd);
 		return ret;
 	}
@@ -220,6 +277,28 @@ static noinline int ksyscall_execv_ksud(const char *fn_name, void ***u_argv, voi
 		pr_info("su_compat: ksyscall(execve, \"%s\", 0x%lx, 0x%lx);\n", fd_path, (uintptr_t)argv, (uintptr_t)envp);
 
 	return 0;
+#else
+	char __user **argv = (char __user **)*(void ***)u_argv;
+	char __user **envp = (char __user **)*(void ***)u_envp;
+
+	/**
+	 * on old abi, we can use kernel_execve. however, just like userspace execve,
+	 * this does NOT return to caller on success, so we install fd before exec
+	 */
+	ksu_install_su_fd(); // ksu#3679
+	pr_info("su_compat: %s su->%s!\n", fn_name, fd_path);
+
+	if (IS_ENABLED(CONFIG_KSU_DEBUG))
+		pr_info("su_compat: kernel_execve(\"%s\", 0x%lx, 0x%lx);\n", fd_path, (uintptr_t)argv, (uintptr_t)envp);
+
+	int ret = kernel_execve(fd_path, argv, envp);
+	if (ret) {
+		pr_info("kernel_execve failed! ret: %d \n", ret);
+		ksu_close_fd(fd);
+		return ret;
+	}
+	return 0;
+#endif
 }
 
 static __always_inline void ksu_sucompat_user_execve(const char __user **filename_user, void *restrict argv, void *restrict envp, const char *syscall_name)
@@ -241,7 +320,7 @@ static __always_inline void ksu_sucompat_user_execve(const char __user **filenam
 	if (!!escape_with_root_profile())
 		return;
 
-	if (!ksyscall_execv_ksud(syscall_name, argv, envp))
+	if (!ksyscall_execve_ksud(syscall_name, argv, envp))
 		return;
 
 	// failure path
@@ -350,7 +429,7 @@ static __always_inline void ksu_sucompat_kernel_common(int *restrict fd, void **
 		u_envp = (void ***)&kenvp->ptr.compat;
 #endif
 
-	if (!ksyscall_execv_ksud(function_name, u_argv, u_envp))
+	if (!ksyscall_execve_ksud(function_name, u_argv, u_envp))
 		return;
 
 	// failure path
