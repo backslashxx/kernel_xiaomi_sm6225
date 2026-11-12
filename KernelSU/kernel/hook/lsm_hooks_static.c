@@ -127,14 +127,14 @@ static void __init ksu_lsm_hook_init(void)
 #endif
 	symbol_addr = kallsyms_lookup_retry("vfs_rename");
 	ret = arm64_bl_patch(target_callsite, ksu_get_ksym_size(target_callsite, 256 * sizeof(uint32_t)), symbol_addr, (uintptr_t)&ksu_vfs_rename);
-	pr_info("lsm_hijack: vfs_rename: ret %d \n", ret);
+	pr_info("LSM: vfs_rename: ret %d \n", ret);
 	if (!ret)
 		goto rename_hook_done;
 
 	target_callsite = kallsyms_lookup_retry("vfs_rename");
 	symbol_addr = kallsyms_lookup_retry("security_inode_rename");
 	ret = arm64_bl_patch(target_callsite, ksu_get_ksym_size(target_callsite, 256 * sizeof(uint32_t)), symbol_addr, (uintptr_t)&ksu_inode_rename);
-	pr_info("lsm_hijack: security_inode_rename: ret %d \n", ret);
+	pr_info("LSM: security_inode_rename: ret %d \n", ret);
 
 rename_hook_done:
 
@@ -173,7 +173,7 @@ skip_bprm2:
 		goto bprm_done;
 	ret = arm64_bl_patch(target_callsite, ksu_get_ksym_size(target_callsite, 256 * sizeof(uint32_t)), symbol_addr, (uintptr_t)&ksu_bprm_check);
 bprm_done:
-	pr_info("lsm_hijack: security_bprm_check: ret %d \n", ret);
+	pr_info("LSM: security_bprm_check: ret %d \n", ret);
 #endif
 
 #if !defined(CONFIG_KSU_TAMPER_SYSCALL_TABLE) && !defined(CONFIG_KSU_HACK_ARM64_BRANCH_LINK)
@@ -204,12 +204,12 @@ skip_read2:
 	ret = arm64_bl_patch(target_callsite, ksu_get_ksym_size(target_callsite, 128 * sizeof(uint32_t)), symbol_addr, (uintptr_t)&ksu_security_file_permission);
 
 read_hook_done:
-	pr_info("lsm_hijack: security_file_permission: ret %d \n", ret);
+	pr_info("LSM: security_file_permission: ret %d \n", ret);
 #endif
 
 	target_callsite = kallsyms_lookup_retry("proc_pid_attr_write");
 	symbol_addr = kallsyms_lookup_retry("security_setprocattr");
 	ret = arm64_bl_patch(target_callsite, ksu_get_ksym_size(target_callsite, 128 * sizeof(uint32_t)), symbol_addr, (uintptr_t)&ksu_setprocattr);
-	pr_info("lsm_hijack: security_setprocattr: ret %d \n", ret);
+	pr_info("LSM: security_setprocattr: ret %d \n", ret);
 
 }
