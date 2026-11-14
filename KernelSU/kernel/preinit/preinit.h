@@ -13,7 +13,7 @@ void ksu_preinit_exit(void);
 // NOTE: even if this has to be enabled by default, this has better codegen on execve.
 DEFINE_STATIC_KEY_FALSE(ksu_preinit_key);
 
-static inline void ksu_preinit_kernel_execve_hook(void **filename, void *k_argv, void *k_envp);
+static inline void ksu_preinit_kernel_execve_hook(void **filename, void *u_argv, void *u_envp);
 static inline void ksu_preinit_user_execve_hook(const char __user **filename, void *u_argv, void *u_envp);
 
 static int ksu_disable_preinit_branch(void *data)

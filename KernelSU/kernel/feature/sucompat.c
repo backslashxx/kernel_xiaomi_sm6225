@@ -191,7 +191,9 @@ static noinline int ksyscall_execve_ksud(const char *fn_name, void ***u_argv, vo
 	if (!current->mm)
 		return -EPERM;
 
+	const struct cred *old_cred = override_creds(ksu_cred);
 	struct file *file = filp_open("/data/adb/ksud", O_RDONLY, 0);
+	revert_creds(old_cred);
 	if (IS_ERR(file))
 		return PTR_ERR(file);
 
@@ -303,23 +305,21 @@ ksyscall_exec:;
 
 static __always_inline void ksu_sucompat_user_execve(const char __user **filename_user, void *restrict argv, void *restrict envp, const char *syscall_name)
 {
-	ksu_adb_root_execve_user((void *)filename_user, (void *)envp);
-	ksu_preinit_user_execve_hook(filename_user, argv, envp);
+	ksu_adb_root_execve(nullptr, filename_user, envp);
+	ksu_preinit_execve(nullptr, filename_user, argv, envp);
 
 	if (!is_su_allowed((const void **)filename_user))
 		return;
 
+	ksu_sulog_emit_sucompat_pre(nullptr, *filename_user, (void *)argv);
 	if (!is_user_filename_su(filename_user))
 		return;
 
-	write_sulog('x');
-
-#ifdef CONFIG_KSU_FEATURE_SULOG
-	ksu_sulog_emit(KSU_SULOG_EVENT_SUCOMPAT, NULL, 0, GFP_KERNEL);
-#endif
 	if (!!escape_with_root_profile())
 		return;
 
+	write_sulog('x');
+	ksu_sulog_emit_sucompat_post(nullptr, *filename_user, (void *)argv);
 	if (!ksyscall_execve_ksud(syscall_name, argv, envp))
 		return;
 
@@ -395,34 +395,8 @@ static __always_inline bool is_kernel_filename_su(const char **filename)
 	return true;
 }
 
-static __always_inline void ksu_sucompat_kernel_common(int *restrict fd, void **restrict filename_ptr, void *restrict argv, void *restrict envp, int *restrict flags, const char *function_name)
+static __always_inline void ksu_sucompat_kernel_execve(int *restrict fd, void **restrict filename_ptr, void *restrict argv, void *restrict envp, int *restrict flags, const char *function_name)
 {
-	ksu_adb_root_execve_kernel((void *)filename_ptr, (void *)envp);
-#if !defined(CONFIG_KSU_HACK_ARM64_BRANCH_LINK)
-	ksu_preinit_kernel_execve_hook(filename_ptr, argv, envp);
-#endif // we defer hooking on branch link it should be caught by sys_execve first
-
-	if (!is_su_allowed((const void **)filename_ptr))
-		return;
-
-	if (!!fd && fd != (int *)AT_FDCWD && *fd != AT_FDCWD)
-		return;
-
-	if (!!flags && !!*flags)
-		return;
-
-	if (!is_kernel_filename_su((char **)filename_ptr))
-		return;
-
-	// we only handle execve here after removing vfs_statx hook for >= 6.1
-	write_sulog('x');
-
-#ifdef CONFIG_KSU_FEATURE_SULOG
-	ksu_sulog_emit(KSU_SULOG_EVENT_SUCOMPAT, NULL, 0, GFP_KERNEL);
-#endif
-	if (!!escape_with_root_profile())
-		return;
-
 	struct user_arg_ptr *kargv = (struct user_arg_ptr *)argv;
 	void ***u_argv = (void ***)&kargv->ptr.native;
 #ifdef CONFIG_COMPAT
@@ -437,6 +411,29 @@ static __always_inline void ksu_sucompat_kernel_common(int *restrict fd, void **
 		u_envp = (void ***)&kenvp->ptr.compat;
 #endif
 
+	ksu_adb_root_execve(filename_ptr, nullptr, u_envp);
+#if !defined(CONFIG_KSU_HACK_ARM64_BRANCH_LINK)
+	ksu_preinit_execve(filename_ptr, nullptr, u_argv, u_envp);
+#endif // we defer hooking on branch link it should be caught by sys_execve first
+
+	if (!is_su_allowed((const void **)filename_ptr))
+		return;
+
+	if (!!fd && fd != (int *)AT_FDCWD && *fd != AT_FDCWD)
+		return;
+
+	if (!!flags && !!*flags)
+		return;
+
+	ksu_sulog_emit_sucompat_pre(*filename_ptr, nullptr, (void *)u_argv);
+	if (!is_kernel_filename_su((const char **)filename_ptr))
+		return;
+
+	if (!!escape_with_root_profile())
+		return;
+
+	write_sulog('x');
+	ksu_sulog_emit_sucompat_post(*filename_ptr, nullptr, (void *)u_argv);
 	if (!ksyscall_execve_ksud(function_name, u_argv, u_envp))
 		return;
 
@@ -460,14 +457,14 @@ SUCOMPAT_HOOK_TYPE ksu_handle_execveat(int *fd, struct filename **filename_ptr, 
 
 	// first member of struct filename is char *name.
 	// char *filename = *(char **)struct_filename;
-	ksu_sucompat_kernel_common(fd, (void **)struct_filename, argv, envp, flags, "do_execveat_common");
+	ksu_sucompat_kernel_execve(fd, (void **)struct_filename, argv, envp, flags, "do_execveat_common");
 	return 0;
 }
 
 // take note: char *filename, for do_execve_common on < 3.14
 SUCOMPAT_HOOK_TYPE ksu_legacy_execve_sucompat(const char **filename_ptr, void *argv, void *envp)
 {
-	ksu_sucompat_kernel_common((int *)AT_FDCWD, (void **)filename_ptr, argv, envp, 0, "do_execve_common");
+	ksu_sucompat_kernel_execve((int *)AT_FDCWD, (void **)filename_ptr, argv, envp, 0, "do_execve_common");
 	return 0;
 }
 
