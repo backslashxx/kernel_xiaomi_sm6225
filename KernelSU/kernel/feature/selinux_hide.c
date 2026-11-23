@@ -61,12 +61,12 @@ static __always_inline int ksu_hide_setprocattr_inline(const char *name, void *v
 	if (!str || !str[0])
 		return 0;
 
-	if (!ksu_should_destroy_context(str, size))
+	if (!ksu_should_destroy_context(str, size, true))
 		return 0;
 	
-	pr_info("selinux_hide: setprocattr: destroy: %.*s\n", size, str);
-	str[1] = ';';
-
+	pr_info_ratelimited("selinux_hide: setprocattr: destroy: %.*s\n", size, str);
+	replace_after_second_colon((char *)str, size);
+	do_useless_alloc(size);
 	return 0;
 }
 
@@ -98,7 +98,7 @@ static __always_inline int ksu_hide_setxattr_inline(const char *name, void *valu
 	if (!str || !str[0])
 		return 0;
 
-	if (!ksu_should_destroy_context(str, size))
+	if (!ksu_should_destroy_context(str, size, true))
 		return 0;
 
  // this is wrong, this just fucks up ratelimit, rethink later, also better to catch in userspace
@@ -114,9 +114,8 @@ static __always_inline int ksu_hide_setxattr_inline(const char *name, void *valu
 	}
 #endif
 	// destroy
-	pr_info("selinux_hide: inode_setxattr: destroy: %.*s\n", size, str);
-	str[1] = ';';
-
+	pr_info_ratelimited("selinux_hide: inode_setxattr: destroy: %.*s\n", size, str);
+	replace_after_second_colon((char *)str, size);
 	return 0;
 }
 
@@ -147,9 +146,11 @@ static __nocfi ssize_t ksu_selinux_transaction_write(struct file *file, const ch
 		goto skip_destroy;
 
 	kbuf[len] = '\0';
-	if (ksu_should_destroy_context(kbuf, len)) {
-		pr_info("selinux_hide: selinux_transaction_write: destroy: %s \n", kbuf);
-		buf = (const char __user *)current->mm->start_stack;
+	if (ksu_should_destroy_context(kbuf, len, false)) {
+		pr_info_ratelimited("selinux_hide: selinux_transaction_write: destroy: %s \n", kbuf);
+		// buf = (const char __user *)current->mm->start_stack;
+		do_useless_alloc(len);
+		return -EINVAL;
 	}
 
 	ssize_t ret = selinux_transaction_write_fn(file, buf, size, pos);
@@ -168,8 +169,14 @@ static __nocfi ssize_t ksu_selinux_transaction_write(struct file *file, const ch
 	if (sscanf(ar->data, "%x %x %x %x %u %x", &avd_allowed, &ff, &avd_auditallow, &avd_auditdeny, &avd_seqno, &avd_flags) != 6)
 		return ret;
 
+	if (IS_ENABLED(CONFIG_KSU_DEBUG))
+		pr_info("ar->data: before: %s \n", ar->data);
+
 	avd_seqno = 1; // simple_transaction_set()
 	ar->size = scnprintf(ar->data, SIMPLE_TRANSACTION_LIMIT, "%x %x %x %x %u %x", avd_allowed, ff, avd_auditallow, avd_auditdeny, avd_seqno, avd_flags);
+
+	if (IS_ENABLED(CONFIG_KSU_DEBUG))
+		pr_info("ar->data: after: %s \n", ar->data);
 
 	return ret;
 
@@ -318,75 +325,14 @@ bail_out:
 	path_put(&path);
 }
 
-#if defined(CONFIG_ARM64) && defined(CONFIG_KALLSYMS)
-#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 4, 0) && defined(KSU_COMPAT_HAS_SELINUX_STATE)
-__attribute__((used)) struct page *hook_selinux_kernel_status_page(struct selinux_state *state)
-#else
-__attribute__((used)) struct page *hook_selinux_kernel_status_page(void)
-#endif
-{
-	if (unlikely(!ksu_selinux_hide_enabled))
-		goto orig_page;
-
-	if (!ksu_is_seccomp_enabled())
-		goto orig_page;
-
-	if (current_uid().val < 10000)
-		goto orig_page;
-
-	assume(!!ksu_fake_status_page);
-	if (unlikely(!ksu_fake_status_page))
-		goto orig_page;
-
-	pr_info("selinux_hide: sel_open_handle_status: served fake_page\n");
-	return ksu_fake_status_page;
-
-orig_page:
-#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 4, 0) && defined(KSU_COMPAT_HAS_SELINUX_STATE)
-	return selinux_kernel_status_page(&selinux_state);
-#else
-	return selinux_kernel_status_page();
-#endif
-}
-
-static void patch_branch_sel_open_handle_status(void)
-{
-	uintptr_t target_callsite = kallsyms_lookup_retry("sel_open_handle_status");
-	uintptr_t symbol_addr = kallsyms_lookup_retry("selinux_kernel_status_page");
-	if (!symbol_addr || !target_callsite)
-		goto hook_classic;
-
-
-	int ret = arm64_b_or_bl_patch(target_callsite, ksu_get_ksym_size(target_callsite, 32 * 4), symbol_addr, (uintptr_t)&hook_selinux_kernel_status_page);
-	if (ret == -ERANGE) {
-		uintptr_t landing_pad = create_landing_pad((uintptr_t)&hook_selinux_kernel_status_page);
-		if (landing_pad)
-			ret = arm64_b_or_bl_patch(target_callsite, ksu_get_ksym_size(target_callsite, 32 * 4), symbol_addr, landing_pad);
-	}
-	pr_info("hook_site: sel_open_handle_status->selinux_kernel_status_page ret: %d \n", ret);
-	if (!ret)
-		return;
-hook_classic:
-	ksu_init_hook_sel_handle_status_ops_open();
-}
-#define ksu_init_hook_sel_handle_status_ops_open patch_branch_sel_open_handle_status
-#endif // ARM64 && KALLSYMS
-
 // init kthread
 static int ksu_selinux_hide_init_thread(void *data)
 {
 	set_user_nice(current, 19); // low prio
 
-wait_start:
-	// in input hook got turned off means we have ksud!
-	if (!*(volatile bool *)&ksu_input_hook)
-		goto init_hooks;
+	if (*(volatile bool *)&ksu_vfs_read_hook)
+		msleep(1000);
 
-	msleep(5000);
-
-	goto wait_start;
-
-init_hooks:; // apply_kernelsu_rules_fn
 	const char *ksu_domain_args[] = { KERNEL_SU_DOMAIN, NULL };
 	ksu_add_shit_to_list(KSU_SEPOLICY_CMD_TYPE, ksu_domain_args);
 
@@ -413,8 +359,12 @@ try_again:
 	goto try_again;
 
 page_ok:
+#if defined(KSU_HAS_ARM64_SELINUX_HIDE)
+	init_arm64_selinux_hide();
+#else
 	ksu_init_hook_sel_handle_status_ops_open();
 	ksu_init_hook_transaction_ops_write();
+#endif
 
 	// selinux_setprocattr hook init is on lsm.
 	
